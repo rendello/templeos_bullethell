@@ -16,6 +16,10 @@
 #define CANV_Y_START	4
 #define CANV_Y_END	(GR_HEIGHT-12)
 
+#define CANV_X_MID	((CANV_X_END-CANV_X_START)/2)
+#define CANV_Y_MID	((CANV_Y_END-CANV_Y_START)/2)
+
+
 #define LOGO_HEIGHT	175
 
 #define ENEMY_NUM	level[0]
@@ -27,6 +31,7 @@
 #define MAX_BULLET_NUM		1000
 
 #define BULLET_COLORS_NUM	22
+#define WATER_COLORS_NUM	22
 
 // Game difficulties
 #define EASY	0
@@ -39,6 +44,7 @@ I64 RandRange(I64 min=0, I64 max) {
   return Abs(RandI64 % (max+1 - min) + min);
 }
 
+Bool DEBUG=TRUE;
 
 I64 i;
 I64 frame=0;
@@ -46,12 +52,19 @@ I64 bullet_count=0;
 
 F64 match_start_time = tS;
 F64 match_time;
+F64 total_match_time;
 
 I64 difficulty=HARD;
 
+
+// The max spawn height is divided by larger
+// numbers as the game progresses, compressing more
+// enemies onto the screen at once.
+I64 spawn_height_divisor=1;
+
 // The two colors used for bullets will rapidly
 // shift place in the palette.
-I64 bullet_colors[BULLET_COLORS_NUM]={
+static I64 bullet_colors[BULLET_COLORS_NUM]={
   0xff0033000000,0xff0041000000,0xff004f000000,0xff005d000000,
   0xff006b000000,0xff0079000000,0xff0086000000,0xff0094000000,
   0xff00a2000000,0xff00b0000000,0xff00be000000,0xff00cc000000,
@@ -59,6 +72,16 @@ I64 bullet_colors[BULLET_COLORS_NUM]={
   0xff0086000000,0xff0079000000,0xff006b000000,0xff005d000000,
   0xff004f000000,0xff0041000000
 };
+
+static I64 water_colors[WATER_COLORS_NUM]={
+  0x00000000cc00,0x05000900d100,0x09001300d500,0x0e001c00da00,
+  0x13002500df00,0x17002e00e300,0x1c003800e800,0x20004100ec00,
+  0x25004a00f100,0x2a005300f600,0x2e005d00fa00,0x33006600ff00,
+  0x2e005d00fa00,0x2a005300f600,0x25004a00f100,0x20004100ec00,
+  0x1c003800e800,0x17002e00e300,0x13002500df00,0x0e001c00da00,
+  0x09001300d500,0x05000900d100
+};
+
 
 // (difficulty) level:
 //   0: enemy number
@@ -141,18 +164,50 @@ CDC *dc=DCAlias;
 U0 DrawIt(CTask *task, CDC *) {
   I64 i;
 
-  DCFill(dc,LTCYAN);
+  /*
+  // EYE OF THE GUARDIAN
+  DCFill(dc,DKGRAY);
+  for (i=CANV_X_END;i>0;i-=6) {
+    dc->color=LTRED+(i&2);
+    GrFillCircle(
+      dc,
+      Sin(tS/3)*(i&15)+CANV_X_MID,
+      Sin(tS/4)*(i&15)+CANV_Y_MID,
+      ,
+      i
+     );
+  }
+  */
+
+
+  // Palette shift water
+  GrPaletteColorSet(BLUE,water_colors[ClampI64(Floor(match_time/2),0,WATER_COLORS_NUM/2)]);
+
+  DCFill(dc,BLACK);
+
+  // Rising sun.
+  dc->color=YELLOW;
+  GrFillCircle(dc,CANV_X_MID,510-(match_time/2)`2,,200);
+
+
+  // Planet.
+  dc->color=BLUE;
+  GrFillCircle(dc,CANV_X_MID,CANV_Y_END*3+match_time,,2000);
+
 
   dc->color=BLUE;
   GrFillCircle(dc,player_pos[0],player_pos[1],,10);  
   for (i=0; i<ENEMY_NUM;i++) {
-    dc->color=BLACK;
+    dc->color=GREEN;
     GrFillCircle(dc,enemies[i][0],enemies[i][1],,20);
   }
 
-  // Palette shifts bullet colors.
+
+
+
+  // Palette-shifts the bullet colors.
   GrPaletteColorSet(RED,bullet_colors[Floor(frame/8)%BULLET_COLORS_NUM]);
-  GrPaletteColorSet(LTRED,bullet_colors[Floor(frame/8+7)%BULLET_COLORS_NUM]);
+  GrPaletteColorSet(LTRED,bullet_colors[Floor(frame/8+7)%BULLET_COLORS_NUM]);
 
 
   for (i=0;i<MAX_BULLET_NUM;i++) {
@@ -172,7 +227,6 @@ U0 DrawIt(CTask *task, CDC *) {
       dc->color=RED;
     }
     GrFillCircle(dc,bullets[i][0],bullets[i][1],,6);
-
   }
 
 
@@ -197,6 +251,9 @@ U0 DrawIt(CTask *task, CDC *) {
   dc->color=BLACK;
   GrPrint(dc,CANV_X_END+10,LOGO_HEIGHT+8,"Time:%5.2f",match_time);
   GrPrint(dc,CANV_X_END+50,LOGO_HEIGHT+36,"Scores");
+  if (DEBUG) {
+    GrPrint(dc,CANV_X_END+50,LOGO_HEIGHT+56,"Divisor: %d",spawn_height_divisor);
+  }
 }
 
 
@@ -250,14 +307,19 @@ U0 Main() {
       if (enemies[i][1] > GR_HEIGHT+10) {
         // Reset enemy if below screen.
         enemies[i][0] = RandRange(CANV_X_START,CANV_X_END);
-        enemies[i][1] = (RandRange(,MAX_SPAWN_HEIGHT/5)-MAX_SPAWN_HEIGHT/5)-200;
+        enemies[i][1] = \
+          (RandRange(,MAX_SPAWN_HEIGHT/spawn_height_divisor) \
+          -MAX_SPAWN_HEIGHT/spawn_height_divisor)-200;
       } else {
         // Move enemy downward.
         enemies[i][1]++;
 
-        // Sway enemies
+        // Sway enemies. They always sway, but much moreso
+        // on later stages.
         if (ENEMY_SWAY) {
-          enemies[i][0] = Sin(enemies[i][1]/20.0)*10+enemies[i][2];
+          enemies[i][0] = Sin(enemies[i][1]/40.0)*20+enemies[i][2];
+        } else {
+          enemies[i][0] = Sin(enemies[i][1]/40.0)*10+enemies[i][2];
         }
       }
     }
@@ -277,6 +339,13 @@ U0 Main() {
         bullets[i][0] += bullets[i][2];
         bullets[i][1] += bullets[i][3];
       }
+    }
+
+    // See spawn_height_divisor declaration.
+    // Tying gameplay to framerate is considered very
+    // good practice.
+    if (frame != 0 && frame % 2500 == 0) {
+      spawn_height_divisor++;
     }
 
     Sleep(FRAME_DELAY);
