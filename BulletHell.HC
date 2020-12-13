@@ -1,22 +1,22 @@
 
-// Bullet
+// This is Bull!ts
 // By @Rendello_; June 2020
 // For the Temple Operating System (TempleOS)
 //
 // This work has been placed in the public domain.
 // If you modify and re-release it, I ask that you
-// change the title, and provide credit to the original.
+// change the title, and give credit to the original.
 //
 // Enjoy!
 
 
 // Canvas
 #define CANV_X_START	4
-#define CANV_X_END	(GR_WIDTH-150)
+#define CANV_X_END	(GR_WIDTH-175)
 #define CANV_Y_START	4
 #define CANV_Y_END	(GR_HEIGHT-12)
 
-#define LOGO_HEIGHT	150
+#define LOGO_HEIGHT	175
 
 #define ENEMY_NUM	level[0]
 #define FRAME_DELAY	level[1]
@@ -25,6 +25,8 @@
 
 #define MAX_SPAWN_HEIGHT	10000
 #define MAX_BULLET_NUM		1000
+
+#define BULLET_COLORS_NUM	22
 
 // Game difficulties
 #define EASY	0
@@ -46,6 +48,17 @@ F64 match_start_time = tS;
 F64 match_time;
 
 I64 difficulty=HARD;
+
+// The two colors used for bullets will rapidly
+// shift place in the palette.
+I64 bullet_colors[BULLET_COLORS_NUM]={
+  0xff0033000000,0xff0041000000,0xff004f000000,0xff005d000000,
+  0xff006b000000,0xff0079000000,0xff0086000000,0xff0094000000,
+  0xff00a2000000,0xff00b0000000,0xff00be000000,0xff00cc000000,
+  0xff00be000000,0xff00b0000000,0xff00a2000000,0xff0094000000,
+  0xff0086000000,0xff0079000000,0xff006b000000,0xff005d000000,
+  0xff004f000000,0xff0041000000
+};
 
 // (difficulty) level:
 //   0: enemy number
@@ -136,9 +149,30 @@ U0 DrawIt(CTask *task, CDC *) {
     dc->color=BLACK;
     GrFillCircle(dc,enemies[i][0],enemies[i][1],,20);
   }
-  dc->color=RED;
+
+  // Palette shifts bullet colors.
+  GrPaletteColorSet(RED,bullet_colors[Floor(frame/8)%BULLET_COLORS_NUM]);
+  GrPaletteColorSet(LTRED,bullet_colors[Floor(frame/8+7)%BULLET_COLORS_NUM]);
+
+
   for (i=0;i<MAX_BULLET_NUM;i++) {
+    // The bullets consist of two colored circles, with
+    // two color variations. The colors don't strictly
+    // matter, as the palette definition changes.
+
+    if (i%2==0) {
+      dc->color=RED;
+    } else {
+      dc->color=LTRED;
+    }
     GrFillCircle(dc,bullets[i][0],bullets[i][1],,10);
+    if (i%2==0) {
+      dc->color=LTRED;
+    } else {
+      dc->color=RED;
+    }
+    GrFillCircle(dc,bullets[i][0],bullets[i][1],,6);
+
   }
 
 
@@ -215,7 +249,7 @@ U0 Main() {
 
       if (enemies[i][1] > GR_HEIGHT+10) {
         // Reset enemy if below screen.
-        enemies[i][0] = RandRange(,GR_WIDTH);
+        enemies[i][0] = RandRange(CANV_X_START,CANV_X_END);
         enemies[i][1] = (RandRange(,MAX_SPAWN_HEIGHT/5)-MAX_SPAWN_HEIGHT/5)-200;
       } else {
         // Move enemy downward.
@@ -257,4 +291,4 @@ U0 Main() {
 Main;
 
 
-
+
