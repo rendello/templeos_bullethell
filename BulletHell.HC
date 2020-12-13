@@ -1,15 +1,15 @@
 
-// $TX+IV,"       This Is Bull!ts       "$  ÛÛÛ   ÛÛÛ
-//                               Û±±ÛÛ ÛÛÛÛÛ
-// Bullet Hell game for TempleOS.Û±ÛÛÛÛÛÛÛÛÛ
-// By Rendello, June 2020        ÛÛÛÛÛÛÛÛÛÛÛ  
-//                               Û±ÛÛÛÛÛÛ±±Û  ±±
-// This game is licensed CC-BY.   ÛÛÛÛÛÛ± ±± ±±±±
-// If you modify and re-release    ÛÛÛÛÛ±±±±±±±±±
-// it, please change the title      ÛÛÛÛÛ±±±±±±±
-// and credit the original.          ÛÛÛ  ±±±±±
-//                                    Û    ±±±
-// Enjoy!                                   ±
+// $TX+IV,"       This Is Bull!ts       "$   ÛÛÛ   ÛÛÛ
+//                                Û±±ÛÛ ÛÛÛÛÛ
+// Bullet Hell game for TempleOS. Û±ÛÛÛÛÛÛÛÛÛ
+// By Rendello, June 2020.        ÛÛÛÛÛÛÛÛÛÛÛ  
+//                                Û±ÛÛÛÛÛÛ±±Û  ±±
+// Uses BSD-3 licence, see readme. ÛÛÛÛÛÛ± ±± ±±±±
+// If you modify and re-release     ÛÛÛÛÛ±±±±±±±±±
+// it, please change the title       ÛÛÛÛÛ±±±±±±±
+// and credit the original.           ÛÛÛ  ±±±±±
+//                                     Û    ±±±
+// Enjoy!                                    ±
 
 
 #define DEBUG		TRUE
@@ -49,8 +49,8 @@ class Match {
   I64 enemy_sway_lower_bound;
   I64 enemy_sway_upper_bound;
 
-  I64 start_time;
-  I64 time;
+  F64 start_time;
+  F64 time;
 };
 
 class Player {
@@ -85,6 +85,7 @@ I64 RandRangeI64(I64 min=0, I64 max) {
   return ((RandU32()(U64) * (max-min)) >> 32) + min;
 }
 
+
 CBGR48 RGBToColor(I16 red, I16 green, I16 blue) {
   // Standard 0-255 RGB values to TempleOS color value.
 
@@ -98,6 +99,7 @@ CBGR48 RGBToColor(I16 red, I16 green, I16 blue) {
   return color_val;
 }
 
+
 U0 ColorToRGB(I64 *buf,CBGR48 color) {
   // Fills three-value buffer with R,G, and B vals
   // from 0-255.
@@ -106,6 +108,7 @@ U0 ColorToRGB(I64 *buf,CBGR48 color) {
   buf[1] = color >> 24 & 0xFF;
   buf[2] = color >> 8  & 0xFF;
 }
+
 
 U0 InterpolateColors(CBGR48 *buf,I64 steps,CBGR48 color_1,
 	CBGR48 color_2,	Bool walk_back=FALSE) {
@@ -148,8 +151,24 @@ U0 InterpolateColors(CBGR48 *buf,I64 steps,CBGR48 color_1,
 GameMs game_ms = {0,0,0,0,0,0};
 
 
+class Difficulty {
+  I64 enemy_num;
+  I64 frame_delay;
+  I64 enemy_fire_cooldown;
+  Bool enemy_sway;
+};
+
+
+Difficulty difficulties[5] = {
+  {70,13,100,5},	// Easy.
+  {80,12,90,6},		// Medium.
+  {100,10,80,9},	// Hard.
+  {120,9,70,15},	// Chaos.
+  {300,8,30,25}		// Mayhem.
+};
+
 // Palette swap data
-I64 bullet_color_steps = 91;
+I64 bullet_color_steps = 81;
 I64 bullet_color_num = (bullet_color_steps*2)-2;
 CBGR48 bullet_colors[bullet_color_num];
 
@@ -210,33 +229,38 @@ U0 DrawIt(CTask *task, CDC *) {
 
   DCFill;
 
-  // $TX+IV," Palette-shift bullets "$
-  // Bullets have two colors, one is always behind the other
-  // by ~half the steps.
-
-  GrPaletteColorSet(RED,bullet_colors[frame%bullet_color_num]);
-  GrPaletteColorSet(LTRED,bullet_colors[Floor(frame/8+bullet_color_steps)%bullet_color_num]);
 
-  // Enemies.
+  // $TX+IV," Draw enemies "$
   for (i=0; i<match.enemy_num;i++) {
     dc->color=GREEN;
     GrFillCircle(dc,enemies[i].x,enemies[i].y,,20);
   }
 
-  // $TX+UL,"Draw Player"$
+  // $TX+IV," Draw player "$
   dc->color=BLUE;
 
-  // Blink on invincibility frames (ie. player just hit)
+  // Blink on invincibility frames
   if (player.invincibility_frames !=0 &&
 	player.invincibility_frames % 4 == 0) {
-    dc->color=WHITE;
+    // (NO-OP; Don't draw player).
+  } else {
+    GrFillCircle(dc,player.x,player.y,,10);  
   }
-  GrFillCircle(dc,player.x,player.y,,10);  
- 
+
+
+  // $TX+IV," Palette-shift bullets "$
+  // Bullets have two colors, one is always behind the other
+  // by approx. half the steps.
+
+  GrPaletteColorSet(RED,bullet_colors[frame%bullet_color_num]);
+  GrPaletteColorSet(LTRED,bullet_colors[(frame+bullet_color_steps)%bullet_color_num]);
+
   for (i=0;i<BULLET_ARRAY_SIZE;i++) {
-    // The bullets consist of two colored circles, with
-    // two color variations. The colors don't strictly
-    // matter, as the palette definition changes.
+    // $TX+IV," Draw bullet "$
+    // Two colored circles, see palette-shift above.
+    // Half of the bullets have a 'dark' middle and 'light' border,
+    // the other half is the opposite. It gives the palette-shifting
+    // bullets more viusal variety.
 
     if (i%2==0) {
       dc->color=RED;
@@ -283,12 +307,6 @@ U0 DrawIt(CTask *task, CDC *) {
 }
 
 
-///I64 steps = 21;
-///CBGR48 bullet_colors[steps*2-2];
-///InterpolateColors(&bullet_colors,steps,0xff0033000000,0xff00cc000000,TRUE);
-
-
-
 U0 Main() {
   SettingsPush;
   AutoComplete;
@@ -300,8 +318,9 @@ U0 Main() {
 
   F64 frame_time_start;
 
+  match.start_time=tS;
+
   while (!ms.lb) {
-///  GrPaletteColorSet(WHITE,bullet_colors[Floor(frame/8)%(steps*2-2)]);
 
     // $TX+IV," Update total match time + start frame time "$
     frame_time_start = tS;
@@ -355,21 +374,22 @@ U0 Main() {
       }
 
       if (enemies[i].y > GR_HEIGHT+10) {
+
         // $TX+IV," Reset enemy if below screen "$
         enemies[i].x = RandRangeI64(canv_x_start,canv_x_end);
         enemies[i].y = RandRangeI64(match.spawn_height,0);
       } else {
-        // $TX+IV," Move enemy downward & sway. "$
-        enemies[i].y++;
 
-//        enemies[i].x = Sin(
-//		enemies[i].y/(enemies[i].sway_multiplier(F64)))*10+enemies[i].original_x;
+        // $TX+IV," Sway enemy & move it downward "$
+        enemies[i].x = Sin(enemies[i].y/40.0)*enemies[i].sway_multiplier \
+		+enemies[i].original_x;
+        enemies[i].y++;
       }
     }
 
     for (i=0;i<BULLET_ARRAY_SIZE;i++) {
 
-      // $TX+IV," Check collision with player. "$
+      // $TX+IV," Check collision with player "$
       // It's lenient and only checks half the player's radius.
       if (bullets[i].x > 0) {
         I64 dx = bullets[i].x - player.x;
@@ -385,13 +405,13 @@ U0 Main() {
           bullets[i].x > canv_x_end+20	 ||
           bullets[i].y < canv_y_start-20 ||
           bullets[i].y > canv_y_end+20) {
-        // $TX+IV," Reset out-of-bounds bullets. "$
+        // $TX+IV," Reset out-of-bounds bullets "$
         bullets[i].x=-10;
         bullets[i].y=0;
         bullets[i].vel_x=0;
         bullets[i].vel_y=0;
       } else {
-        // $TX+IV," Move bullets by their velocity. "$
+        // $TX+IV," Move bullets by their velocity "$
         bullets[i].x += bullets[i].vel_x;
         bullets[i].y += bullets[i].vel_y;
       }
@@ -413,3 +433,4 @@ U0 Main() {
 }
 
 Main;
+
