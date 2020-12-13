@@ -4,7 +4,7 @@
 // Bullet Hell game for TempleOS.Û±ÛÛÛÛÛÛÛÛÛ
 // By Rendello, June 2020        ÛÛÛÛÛÛÛÛÛÛÛ  
 //                               Û±ÛÛÛÛÛÛ±±Û  ±±
-// This game is licensed CC-BY.   ÛÛÛÛÛÛ±±±± ±±±±
+// This game is licensed CC-BY.   ÛÛÛÛÛÛ± ±± ±±±±
 // If you modify and re-release    ÛÛÛÛÛ±±±±±±±±±
 // it, please change the title      ÛÛÛÛÛ±±±±±±±
 // and credit the original.          ÛÛÛ  ±±±±±
@@ -22,7 +22,16 @@
 #define PLAYER_RADIUS		10
 
 
-// $TX+IV,"Class definitions"$
+// $TX+IV,"      Class definitions     "$
+
+class GameMs {
+  I64 x;
+  I64 y;
+  I64 old_x;
+  I64 old_y;
+  I64 delta_x;
+  I64 delta_y;
+}
 
 class Difficulty {
   I64 enemy_num;
@@ -30,7 +39,6 @@ class Difficulty {
   I64 enemy_fire_cooldown;
   Bool enemy_sway;
 };
-
 
 class Match {
   I64 spawn_height;
@@ -45,14 +53,12 @@ class Match {
   I64 time;
 };
 
-
 class Player {
   I64 x;
   I64 y;
   I64 health;
   I64 invincibility_frames;
 };
-
 
 class Enemy {
   I64 x;
@@ -61,16 +67,15 @@ class Enemy {
   I64 sway_multiplier;
 };
 
-
 class Bullet {
   F64 x;
   F64 y;
-  F64 delta_x;
-  F64 delta_y;
+  F64 vel_x;
+  F64 vel_y;
 };
 
 
-// $TX+IV,"Utility functions"$
+// $TX+IV,"     Utility functions     "$
 
 I64 RandRangeI64(I64 min=0, I64 max) {
   // Fast biased integer multiplication method.
@@ -80,9 +85,11 @@ I64 RandRangeI64(I64 min=0, I64 max) {
   return ((RandU32()(U64) * (max-min)) >> 32) + min;
 }
 
-
 CBGR48 RGBToColor(I16 red, I16 green, I16 blue) {
   // Standard 0-255 RGB values to TempleOS color value.
+
+  // 0xRRPPGGPPBBPP
+  // Where RGB and P are red, green, blue, and pad.
 
   CBGR48 color_val=red << 16;
   color_val=(color_val | green) << 16;
@@ -91,8 +98,7 @@ CBGR48 RGBToColor(I16 red, I16 green, I16 blue) {
   return color_val;
 }
 
-
-U0 ColorToRGB(I16 *buf,CBGR48 color) {
+U0 ColorToRGB(I64 *buf,CBGR48 color) {
   // Fills three-value buffer with R,G, and B vals
   // from 0-255.
 
@@ -101,11 +107,10 @@ U0 ColorToRGB(I16 *buf,CBGR48 color) {
   buf[2] = color >> 8  & 0xFF;
 }
 
-
 U0 InterpolateColors(CBGR48 *buf,I64 steps,CBGR48 color_1,
 	CBGR48 color_2,	Bool walk_back=FALSE) {
   // Fills a buffer by linearly interpolating two colors
-  // in RGB space through n steps.
+  // through n steps in RGB space.
   //
   // Generally, steps must equal the size of the buffer.
   //
@@ -136,7 +141,21 @@ U0 InterpolateColors(CBGR48 *buf,I64 steps,CBGR48 color_1,
 }
 
 
-// $TX+IV,"Globals"$
+// $TX+IV,"     Globals     "$
+// AFAIK, The only simple way to pass state to state to
+// the draw callback is by having the state be global.
+
+GameMs game_ms = {0,0,0,0,0,0};
+
+
+// Palette swap data
+I64 bullet_color_steps = 91;
+I64 bullet_color_num = (bullet_color_steps*2)-2;
+CBGR48 bullet_colors[bullet_color_num];
+
+InterpolateColors(&bullet_colors,bullet_color_steps,0xff0033000000,
+	0xff00cc000000,TRUE);
+
 
 I64 i;
 
@@ -172,26 +191,31 @@ Bullet bullets[BULLET_ARRAY_SIZE];
 for (i=0;i<BULLET_ARRAY_SIZE;i++) {
   bullets[i].x=-10;
   bullets[i].y=0;
-  bullets[i].delta_x=0;
-  bullets[i].delta_y=0;
+  bullets[i].vel_x=0;
+  bullets[i].vel_y=0;
 }
 
 I64 bullet_count;
 
+I64 frame;
+
+CTask *task=Fs;
 CDC *dc=DCAlias;
 
 
-// $TX+IV,"Drawing callback"$
+// $TX+IV,"     Drawing callback     "$
 
 U0 DrawIt(CTask *task, CDC *) {
   I64 i;
 
-
   DCFill;
-  // Palette-shifts the bullet colors.
-//  GrPaletteColorSet(RED,bullet_colors[Floor(frame/8)%BULLET_COLORS_NUM]);
-//  GrPaletteColorSet(LTRED,bullet_colors[Floor(frame/8+7)%BULLET_COLORS_NUM]);
 
+  // $TX+IV," Palette-shift bullets "$
+  // Bullets have two colors, one is always behind the other
+  // by ~half the steps.
+
+  GrPaletteColorSet(RED,bullet_colors[frame%bullet_color_num]);
+  GrPaletteColorSet(LTRED,bullet_colors[Floor(frame/8+bullet_color_steps)%bullet_color_num]);
 
   // Enemies.
   for (i=0; i<match.enemy_num;i++) {
@@ -199,11 +223,16 @@ U0 DrawIt(CTask *task, CDC *) {
     GrFillCircle(dc,enemies[i].x,enemies[i].y,,20);
   }
 
-  // Player
+  // $TX+UL,"Draw Player"$
   dc->color=BLUE;
+
+  // Blink on invincibility frames (ie. player just hit)
+  if (player.invincibility_frames !=0 &&
+	player.invincibility_frames % 4 == 0) {
+    dc->color=WHITE;
+  }
   GrFillCircle(dc,player.x,player.y,,10);  
-
-
+ 
   for (i=0;i<BULLET_ARRAY_SIZE;i++) {
     // The bullets consist of two colored circles, with
     // two color variations. The colors don't strictly
@@ -254,6 +283,12 @@ U0 DrawIt(CTask *task, CDC *) {
 }
 
 
+///I64 steps = 21;
+///CBGR48 bullet_colors[steps*2-2];
+///InterpolateColors(&bullet_colors,steps,0xff0033000000,0xff00cc000000,TRUE);
+
+
+
 U0 Main() {
   SettingsPush;
   AutoComplete;
@@ -263,23 +298,37 @@ U0 Main() {
   DocClear;
   Fs->draw_it=&DrawIt;
 
-  I64 frame;
   F64 frame_time_start;
 
   while (!ms.lb) {
-    frame_time_start = tS;
+///  GrPaletteColorSet(WHITE,bullet_colors[Floor(frame/8)%(steps*2-2)]);
 
+    // $TX+IV," Update total match time + start frame time "$
+    frame_time_start = tS;
     match.time = tS - match.start_time;
 
-    player.x = ClampI64(ms.pos.x,canv_x_start,canv_x_end);
-    player.y = ClampI64(ms.pos.y,canv_y_start,canv_y_end);
+    // $TX+IV," Update relative mouse coordinates & speed "$
+    game_ms.old_x = game_ms.x;
+    game_ms.old_y = game_ms.y;
+
+    game_ms.x = ms.pos.x - (task->win_left*FONT_HEIGHT);
+    game_ms.y = ms.pos.y - (task->win_top*FONT_HEIGHT);
+
+    game_ms.delta_x = game_ms.x - game_ms.old_x;
+    game_ms.delta_y = game_ms.y - game_ms.old_y;
+
+    // $TX+IV," Update player position "$
+    player.x = ClampI64(game_ms.x,canv_x_start,canv_x_end);
+    player.y = ClampI64(game_ms.y,canv_y_start,canv_y_end);
 
     for (i=0;i<match.enemy_num;i++) {
       if (frame % match.enemy_fire_cooldown == 0 &&
           canv_y_start < enemies[i].y < canv_y_end) {
+
+        // $TX+IV," Fire towards player"$
         // Bullets are shot by all enemies simultaniously.
-        // The bullets point towards the player's position
-        // at the time of firing.  
+        // The algorithm is funky but accurate. It was
+        // definitely a bug before it was a feature.
 
         F64 delta_x = enemies[i].x - player.x;
         F64 delta_y = enemies[i].y - player.y;
@@ -301,48 +350,50 @@ U0 Main() {
         bullets[bullet_count].x = enemies[i].x;
         bullets[bullet_count].y = enemies[i].y;
 
-        bullets[bullet_count].delta_x = (delta_x(F64)/smaller_abs)/u;
-        bullets[bullet_count].delta_y = (delta_y(F64)/smaller_abs)/u;
+        bullets[bullet_count].vel_x = (delta_x(F64)/smaller_abs)/u;
+        bullets[bullet_count].vel_y = (delta_y(F64)/smaller_abs)/u;
       }
 
       if (enemies[i].y > GR_HEIGHT+10) {
-        // Reset enemy if below screen.
+        // $TX+IV," Reset enemy if below screen "$
         enemies[i].x = RandRangeI64(canv_x_start,canv_x_end);
         enemies[i].y = RandRangeI64(match.spawn_height,0);
       } else {
-        // Move enemy downward.
+        // $TX+IV," Move enemy downward & sway. "$
         enemies[i].y++;
 
 //        enemies[i].x = Sin(
-//		enemies[i].y/(enemies[i].swaye_multiplier(F64)))*10+enemies[i].original_x;
+//		enemies[i].y/(enemies[i].sway_multiplier(F64)))*10+enemies[i].original_x;
       }
     }
 
     for (i=0;i<BULLET_ARRAY_SIZE;i++) {
 
-      // Check collision with player.
+      // $TX+IV," Check collision with player. "$
       // It's lenient and only checks half the player's radius.
-      I64 dx = bullets[i].x - player.x;
-      I64 dy = bullets[i].y - player.y;
-      if (Sqrt(dx * dx + dy * dy) < (BULLET_RADIUS + (PLAYER_RADIUS>>1)) &&
+      if (bullets[i].x > 0) {
+        I64 dx = bullets[i].x - player.x;
+        I64 dy = bullets[i].y - player.y;
+        if (Sqrt(dx * dx + dy * dy) < (BULLET_RADIUS + (PLAYER_RADIUS>>1)) &&
 		player.invincibility_frames == 0) {
-        player.health--;
-        player.invincibility_frames = 100;
-      }
+          player.health--;
+          player.invincibility_frames = 100;
+        }
+      }
 
-      // Move bullets or reset them if out-of-bounds.
       if (bullets[i].x < canv_x_start-20 ||
           bullets[i].x > canv_x_end+20	 ||
           bullets[i].y < canv_y_start-20 ||
           bullets[i].y > canv_y_end+20) {
+        // $TX+IV," Reset out-of-bounds bullets. "$
         bullets[i].x=-10;
         bullets[i].y=0;
-        bullets[i].delta_x=0;
-        bullets[i].delta_y=0;
+        bullets[i].vel_x=0;
+        bullets[i].vel_y=0;
       } else {
-        // Move bullets by their velocity
-        bullets[i].x += bullets[i].delta_x;
-        bullets[i].y += bullets[i].delta_y;
+        // $TX+IV," Move bullets by their velocity. "$
+        bullets[i].x += bullets[i].vel_x;
+        bullets[i].y += bullets[i].vel_y;
       }
     }
 
@@ -362,5 +413,3 @@ U0 Main() {
 }
 
 Main;
-
-
