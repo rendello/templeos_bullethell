@@ -39,14 +39,24 @@
 
 // Game difficulties
 #define EASY	0
-#define NORMAL	1
+#define NORMAL	1
 #define HARD	2
 #define CHAOS	3
 #define MAYHEM	4
 
+/*
 I64 RandRange(I64 min=0, I64 max) {
-  return Abs(RandI64 % (max+1 - min) + min);
+  return Abs(RandI64 % (max+1 - min) + min);
 }
+*/
+
+I64 RandRange(I64 min=0, I64 max) {
+  // Fast biased integer multiplication method,
+  // described here: $AN,"Efficiently Generating a Number in a Range",A="",HTML="http://www.pcg-random.org/posts/bounded-rands.html"$
+
+  return ((RandU32()(U64) * (max-min)) >> 32) + min;
+}
+
 
 Bool DEBUG=TRUE;
 
