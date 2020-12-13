@@ -27,6 +27,10 @@
 #define FIRE_COOLDOWN	level[2]
 #define ENEMY_SWAY	level[3]
 
+#define BULLET_RADIUS	5
+#define PLAYER_RADIUS	10
+
+
 #define MAX_SPAWN_HEIGHT	10000
 #define MAX_BULLET_NUM		1000
 
@@ -35,7 +39,7 @@
 
 // Game difficulties
 #define EASY	0
-#define NORMAL	1
+#define NORMAL	1
 #define HARD	2
 #define CHAOS	3
 #define MAYHEM	4
@@ -49,12 +53,13 @@ Bool DEBUG=TRUE;
 I64 i;
 I64 frame=0;
 I64 bullet_count=0;
+Bool game_over=FALSE;
 
 F64 match_start_time = tS;
 F64 match_time;
 F64 total_match_time;
 
-I64 difficulty=HARD;
+I64 difficulty=CHAOS;
 
 
 // The max spawn height is divided by larger
@@ -164,7 +169,7 @@ CDC *dc=DCAlias;
 U0 DrawIt(CTask *task, CDC *) {
   I64 i;
 
-  /*
+/*
   // EYE OF THE GUARDIAN
   DCFill(dc,DKGRAY);
   for (i=CANV_X_END;i>0;i-=6) {
@@ -177,9 +182,8 @@ U0 DrawIt(CTask *task, CDC *) {
       i
      );
   }
-  */
-
-
+*/
+///*
   // Palette shift water
   GrPaletteColorSet(BLUE,water_colors[ClampI64(Floor(match_time/2),0,WATER_COLORS_NUM/2)]);
 
@@ -189,20 +193,21 @@ U0 DrawIt(CTask *task, CDC *) {
   dc->color=YELLOW;
   GrFillCircle(dc,CANV_X_MID,510-(match_time/2)`2,,200);
 
-
+
   // Planet.
   dc->color=BLUE;
   GrFillCircle(dc,CANV_X_MID,CANV_Y_END*3+match_time,,2000);
+//*/
 
-
+  // Player.
   dc->color=BLUE;
   GrFillCircle(dc,player_pos[0],player_pos[1],,10);  
+
+  // Enemies.
   for (i=0; i<ENEMY_NUM;i++) {
     dc->color=GREEN;
     GrFillCircle(dc,enemies[i][0],enemies[i][1],,20);
   }
-
-
 
 
   // Palette-shifts the bullet colors.
@@ -220,13 +225,13 @@ U0 DrawIt(CTask *task, CDC *) {
     } else {
       dc->color=LTRED;
     }
-    GrFillCircle(dc,bullets[i][0],bullets[i][1],,10);
+    GrFillCircle(dc,bullets[i][0],bullets[i][1],,BULLET_RADIUS<<1);
     if (i%2==0) {
       dc->color=LTRED;
     } else {
       dc->color=RED;
     }
-    GrFillCircle(dc,bullets[i][0],bullets[i][1],,6);
+    GrFillCircle(dc,bullets[i][0],bullets[i][1],,BULLET_RADIUS+1);
   }
 
 
@@ -253,6 +258,8 @@ U0 DrawIt(CTask *task, CDC *) {
   GrPrint(dc,CANV_X_END+50,LOGO_HEIGHT+36,"Scores");
   if (DEBUG) {
     GrPrint(dc,CANV_X_END+50,LOGO_HEIGHT+56,"Divisor: %d",spawn_height_divisor);
+    GrPrint(dc,CANV_X_END+50,LOGO_HEIGHT+76,"Dead: %d",game_over);
+
   }
 }
 
@@ -325,17 +332,24 @@ U0 Main() {
     }
 
     for (i=0;i<MAX_BULLET_NUM;i++) {
+
+      // Check collision with player.
+      // It's lenient and only checks half the player's radius.
+      I64 dx = bullets[i][0] - player_pos[0];
+      I64 dy = bullets[i][1] - player_pos[1];
+      if (Sqrt(dx * dx + dy * dy) < (BULLET_RADIUS + (PLAYER_RADIUS>>1)))
+        game_over = TRUE;
+
+      // Move bullets or reset them if out-of-bounds.
       if (bullets[i][0] < CANV_X_START-20 ||
           bullets[i][0] > CANV_X_END+20	  ||
           bullets[i][1] < CANV_Y_START-20 ||
           bullets[i][1] > CANV_Y_END+20) {
-        // Reset off-screen bullet.
         bullets[i][0]=-10;
         bullets[i][1]=0;
         bullets[i][2]=0;
         bullets[i][3]=0;
       } else {
-        // Move bullet by its proper velocity.
         bullets[i][0] += bullets[i][2];
         bullets[i][1] += bullets[i][3];
       }
