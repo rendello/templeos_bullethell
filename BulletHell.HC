@@ -1,231 +1,210 @@
 
-// This is Bull!ts
-// By @Rendello_; June 2020
-// For the Temple Operating System (TempleOS)
-//
-// This work has been placed in the public domain.
-// If you modify and re-release it, I ask that you
-// change the title, and give credit to the original.
-//
-// Enjoy!
+// $TX+IV,"       This Is Bull!ts       "$  ÛÛÛ   ÛÛÛ
+//                               Û±±ÛÛ ÛÛÛÛÛ
+// Bullet Hell game for TempleOS.Û±ÛÛÛÛÛÛÛÛÛ
+// By Rendello, June 2020        ÛÛÛÛÛÛÛÛÛÛÛ  
+//                               Û±ÛÛÛÛÛÛ±±Û  ±±
+// This game is licensed CC-BY.   ÛÛÛÛÛÛ±±±± ±±±±
+// If you modify and re-release    ÛÛÛÛÛ±±±±±±±±±
+// it, please change the title      ÛÛÛÛÛ±±±±±±±
+// and credit the original.          ÛÛÛ  ±±±±±
+//                                    Û    ±±±
+// Enjoy!                                   ±
 
 
-// Canvas
-#define CANV_X_START	4
-#define CANV_X_END	(GR_WIDTH-175)
-#define CANV_Y_START	4
-#define CANV_Y_END	(GR_HEIGHT-12)
-
-#define CANV_X_MID	((CANV_X_END-CANV_X_START)/2)
-#define CANV_Y_MID	((CANV_Y_END-CANV_Y_START)/2)
+#define DEBUG		TRUE
+#define INVINCIBLE	TRUE
 
 
-#define LOGO_HEIGHT	175
-
-#define ENEMY_NUM	level[0]
-#define FRAME_DELAY	level[1]
-#define FIRE_COOLDOWN	level[2]
-#define ENEMY_SWAY	level[3]
-
-#define BULLET_RADIUS	5
-#define PLAYER_RADIUS	10
+#define MAX_SPAWN_HEIGHT	-10000
+#define BULLET_ARRAY_SIZE	1000
+#define BULLET_RADIUS		5
+#define PLAYER_RADIUS		10
 
 
-#define MAX_SPAWN_HEIGHT	10000
-#define MAX_BULLET_NUM		1000
+// $TX+IV,"Class definitions"$
 
-#define BULLET_COLORS_NUM	22
-#define WATER_COLORS_NUM	22
+class Difficulty {
+  I64 enemy_num;
+  I64 frame_delay;
+  I64 enemy_fire_cooldown;
+  Bool enemy_sway;
+};
 
-// Game difficulties
-#define EASY	0
-#define NORMAL	1
-#define HARD	2
-#define CHAOS	3
-#define MAYHEM	4
 
-/*
-I64 RandRange(I64 min=0, I64 max) {
-  return Abs(RandI64 % (max+1 - min) + min);
-}
-*/
+class Match {
+  I64 spawn_height;
+  I64 enemy_num;
+  I64 enemy_fire_cooldown;
+  I64 frame_length;
 
-I64 RandRange(I64 min=0, I64 max) {
-  // Fast biased integer multiplication method,
-  // described here: $AN,"Efficiently Generating a Number in a Range",A="",HTML="http://www.pcg-random.org/posts/bounded-rands.html"$
+  I64 enemy_sway_lower_bound;
+  I64 enemy_sway_upper_bound;
+
+  I64 start_time;
+  I64 time;
+};
+
+
+class Player {
+  I64 x;
+  I64 y;
+  I64 health;
+  I64 invincibility_frames;
+};
+
+
+class Enemy {
+  I64 x;
+  I64 y;
+  I64 original_x;
+  I64 sway_multiplier;
+};
+
+
+class Bullet {
+  F64 x;
+  F64 y;
+  F64 delta_x;
+  F64 delta_y;
+};
+
+
+// $TX+IV,"Utility functions"$
+
+I64 RandRangeI64(I64 min=0, I64 max) {
+  // Fast biased integer multiplication method.
+  // Described here:
+  // $AN,"Efficiently Generating a Number in a Range",A="",HTML="http://www.pcg-random.org/posts/bounded-rands.html"$ (web link)
 
   return ((RandU32()(U64) * (max-min)) >> 32) + min;
 }
 
 
-Bool DEBUG=TRUE;
+CBGR48 RGBToColor(I16 red, I16 green, I16 blue) {
+  // Standard 0-255 RGB values to TempleOS color value.
+
+  CBGR48 color_val=red << 16;
+  color_val=(color_val | green) << 16;
+  color_val=(color_val | blue) << 8;
+
+  return color_val;
+}
+
+
+U0 ColorToRGB(I16 *buf,CBGR48 color) {
+  // Fills three-value buffer with R,G, and B vals
+  // from 0-255.
+
+  buf[0] = color >> 40 & 0xFF;
+  buf[1] = color >> 24 & 0xFF;
+  buf[2] = color >> 8  & 0xFF;
+}
+
+
+U0 InterpolateColors(CBGR48 *buf,I64 steps,CBGR48 color_1,
+	CBGR48 color_2,	Bool walk_back=FALSE) {
+  // Fills a buffer by linearly interpolating two colors
+  // in RGB space through n steps.
+  //
+  // Generally, steps must equal the size of the buffer.
+  //
+  // If walk_back is enabled, it will step back to original color,
+  // in which case buffer must be of size (steps*2)-2
+
+  I64 i;
+
+  I64 color_1_rgb[3];
+  I64 color_2_rgb[3];
+
+  // (Fill RGB buffers)
+  ColorToRGB(&color_1_rgb,color_1);
+  ColorToRGB(&color_2_rgb,color_2);
+
+  for (i=0;i<steps;i++) {
+    buf[i] = RGBToColor(
+      (color_2_rgb[0] - color_1_rgb[0]) * i / steps + color_1_rgb[0],
+      (color_2_rgb[1] - color_1_rgb[1]) * i / steps + color_1_rgb[1],
+      (color_2_rgb[2] - color_1_rgb[2]) * i / steps + color_1_rgb[2]
+    );
+  }
+  if (walk_back) {
+    for (i=0;i<steps-2;i++) {
+      buf[steps+i] = buf[steps-i-2];
+    }
+  }
+}
+
+
+// $TX+IV,"Globals"$
 
 I64 i;
-I64 frame=0;
-I64 bullet_count=0;
-Bool game_over=FALSE;
 
-F64 match_start_time = tS;
-F64 match_time;
-F64 total_match_time;
+// $TX+UL,"UI dimensions"$
+I64 canv_x_start = 4;
+I64 canv_x_end = GR_WIDTH-175;
+I64 canv_x_mid = (canv_x_end-canv_x_start)/2;
+I64 canv_y_start = 4;
+I64 canv_y_end = GR_HEIGHT-12;
+I64 canv_y_mid = (canv_x_end-canv_x_start)/2;
+I64 logo_height = 175;
 
-I64 difficulty=CHAOS;
+Match match = {MAX_SPAWN_HEIGHT,100,100,10,10,15,tS,tS};
 
+Player player = {100,100,3,0};
 
-// The max spawn height is divided by larger
-// numbers as the game progresses, compressing more
-// enemies onto the screen at once.
-I64 spawn_height_divisor=1;
+I64 enemy_num = 100; 
+Enemy enemies[enemy_num];
+enemies[0].x=1;
 
-// The two colors used for bullets will rapidly
-// shift place in the palette.
-static I64 bullet_colors[BULLET_COLORS_NUM]={
-  0xff0033000000,0xff0041000000,0xff004f000000,0xff005d000000,
-  0xff006b000000,0xff0079000000,0xff0086000000,0xff0094000000,
-  0xff00a2000000,0xff00b0000000,0xff00be000000,0xff00cc000000,
-  0xff00be000000,0xff00b0000000,0xff00a2000000,0xff0094000000,
-  0xff0086000000,0xff0079000000,0xff006b000000,0xff005d000000,
-  0xff004f000000,0xff0041000000
-};
-
-static I64 water_colors[WATER_COLORS_NUM]={
-  0x00000000cc00,0x05000900d100,0x09001300d500,0x0e001c00da00,
-  0x13002500df00,0x17002e00e300,0x1c003800e800,0x20004100ec00,
-  0x25004a00f100,0x2a005300f600,0x2e005d00fa00,0x33006600ff00,
-  0x2e005d00fa00,0x2a005300f600,0x25004a00f100,0x20004100ec00,
-  0x1c003800e800,0x17002e00e300,0x13002500df00,0x0e001c00da00,
-  0x09001300d500,0x05000900d100
-};
-
-
-// (difficulty) level:
-//   0: enemy number
-//   1: game speed ie. time slept between frames
-//   2: enemy fire cooldown
-//   3: enemy sway toggle
-I64 level[4];
-switch (difficulty) {
-  case EASY:
-    level[0]=70;
-    level[1]=13;
-    level[2]=100;
-    level[3]=0;
-    break;
-  case NORMAL:
-    level[0]=80;
-    level[1]=12;
-    level[2]=90;
-    level[3]=0;
-    break;
-  case HARD:
-    level[0]=100;
-    level[1]=10;
-    level[2]=80;
-    level[3]=0;
-    break;
-  case CHAOS:
-    level[0]=120;
-    level[1]=9;
-    level[2]=70;
-    level[3]=1;
-    break;
-  case MAYHEM:
-    level[0]=300;
-    level[1]=8;
-    level[2]=30;
-    level[3]=1;
-    break;
+for (i=0;i<enemy_num;i++) {
+  enemies[i].x = RandRangeI64(canv_x_start,canv_x_end);
+  enemies[i].y = RandRangeI64(MAX_SPAWN_HEIGHT,0);
+  enemies[i].original_x = enemies[i].x;
+  enemies[i].sway_multiplier = RandRangeI64(
+	match.enemy_sway_lower_bound, match.enemy_sway_upper_bound);
 }
 
-// player:
-//   0: x-position
-//   1: y-position
-I64 player_pos[2]={10,10};
-
-// enemy:
-//   0: x-position
-//   1: y-position
-//   2: original x-position (for swaying enemies)
-I64 enemies[ENEMY_NUM][3];
-for (i=0;i<ENEMY_NUM;i++) {
-  enemies[i][0] = RandRange(CANV_X_START,CANV_X_END);
-  enemies[i][1] = RandRange(,MAX_SPAWN_HEIGHT)-MAX_SPAWN_HEIGHT;
-  enemies[i][2] = enemies[i][0];
+// Inactive bullets are stored off-screen.
+// Each fired bullet occupies a new cell of the array,
+// looping to zero after BULLET_ARRAY_SIZE.
+Bullet bullets[BULLET_ARRAY_SIZE];
+for (i=0;i<BULLET_ARRAY_SIZE;i++) {
+  bullets[i].x=-10;
+  bullets[i].y=0;
+  bullets[i].delta_x=0;
+  bullets[i].delta_y=0;
 }
 
-// bullet:
-//   0: x-position
-//   1: y-position
-//   2: change in x per-frame
-//   3: change in y per-frame
-//
-// Each new bullet occupies a new cell of the array,
-// until it reaches cell MAX_BULLET_NUM, then it loops
-// around to  zero, since those bullets should be off-screen
-// long before then.
-
-F64 bullets[MAX_BULLET_NUM][4];
-for (i=0;i<MAX_BULLET_NUM;i++) {
-  bullets[i][0]=-10;
-  bullets[i][1]=0;
-  bullets[i][2]=0;
-  bullets[i][3]=0;
-}
-
+I64 bullet_count;
 
 CDC *dc=DCAlias;
 
 
+// $TX+IV,"Drawing callback"$
+
 U0 DrawIt(CTask *task, CDC *) {
   I64 i;
 
-/*
-  // EYE OF THE GUARDIAN
-  DCFill(dc,DKGRAY);
-  for (i=CANV_X_END;i>0;i-=6) {
-    dc->color=LTRED+(i&2);
-    GrFillCircle(
-      dc,
-      Sin(tS/3)*(i&15)+CANV_X_MID,
-      Sin(tS/4)*(i&15)+CANV_Y_MID,
-      ,
-      i
-     );
-  }
-*/
-///*
-  // Palette shift water
-  GrPaletteColorSet(BLUE,water_colors[ClampI64(Floor(match_time/2),0,WATER_COLORS_NUM/2)]);
 
-  DCFill(dc,BLACK);
+  DCFill;
+  // Palette-shifts the bullet colors.
+//  GrPaletteColorSet(RED,bullet_colors[Floor(frame/8)%BULLET_COLORS_NUM]);
+//  GrPaletteColorSet(LTRED,bullet_colors[Floor(frame/8+7)%BULLET_COLORS_NUM]);
 
-  // Rising sun.
-  dc->color=YELLOW;
-  GrFillCircle(dc,CANV_X_MID,510-(match_time/2)`2,,200);
-
-
-  // Planet.
-  dc->color=BLUE;
-  GrFillCircle(dc,CANV_X_MID,CANV_Y_END*3+match_time,,2000);
-//*/
-
-  // Player.
-  dc->color=BLUE;
-  GrFillCircle(dc,player_pos[0],player_pos[1],,10);  
 
   // Enemies.
-  for (i=0; i<ENEMY_NUM;i++) {
+  for (i=0; i<match.enemy_num;i++) {
     dc->color=GREEN;
-    GrFillCircle(dc,enemies[i][0],enemies[i][1],,20);
+    GrFillCircle(dc,enemies[i].x,enemies[i].y,,20);
   }
 
+  // Player
+  dc->color=BLUE;
+  GrFillCircle(dc,player.x,player.y,,10);  
 
-  // Palette-shifts the bullet colors.
-  GrPaletteColorSet(RED,bullet_colors[Floor(frame/8)%BULLET_COLORS_NUM]);
-  GrPaletteColorSet(LTRED,bullet_colors[Floor(frame/8+7)%BULLET_COLORS_NUM]);
 
-
-  for (i=0;i<MAX_BULLET_NUM;i++) {
+  for (i=0;i<BULLET_ARRAY_SIZE;i++) {
     // The bullets consist of two colored circles, with
     // two color variations. The colors don't strictly
     // matter, as the palette definition changes.
@@ -235,41 +214,42 @@ U0 DrawIt(CTask *task, CDC *) {
     } else {
       dc->color=LTRED;
     }
-    GrFillCircle(dc,bullets[i][0],bullets[i][1],,BULLET_RADIUS<<1);
+    GrFillCircle(dc,bullets[i].x,bullets[i].y,,BULLET_RADIUS<<1);
     if (i%2==0) {
       dc->color=LTRED;
     } else {
       dc->color=RED;
     }
-    GrFillCircle(dc,bullets[i][0],bullets[i][1],,BULLET_RADIUS+1);
+    GrFillCircle(dc,bullets[i].x,bullets[i].y,,BULLET_RADIUS+1);
   }
 
 
   // Draw frame
   dc->color=LTPURPLE;
-  GrRect(dc,0,0,CANV_X_END+1,CANV_Y_START); // Frame top.
-  GrRect(dc,0,CANV_Y_END,CANV_X_END,GR_HEIGHT);	// Frame bottom.
-  GrRect(dc,0,CANV_Y_START,CANV_X_START,CANV_Y_END); // Frame left.
-  GrRect(dc,CANV_X_END,0,GR_WIDTH,GR_HEIGHT); // Sidebar (right).
+  GrRect(dc,0,0,canv_x_end+1,canv_y_start); // Frame top.
+  GrRect(dc,0,canv_y_end,canv_x_end,GR_HEIGHT);	// Frame bottom.
+  GrRect(dc,0,canv_y_start,canv_x_start,canv_y_end); // Frame left.
+  GrRect(dc,canv_x_end,0,GR_WIDTH,GR_HEIGHT); // Sidebar (right).
 
   // Draw frame sheen.
   dc->color=WHITE;
-  GrLine(dc,CANV_X_END,CANV_Y_START,CANV_X_END,CANV_Y_END); // Right.
-  GrLine(dc,CANV_X_START,CANV_Y_END,CANV_X_END,CANV_Y_END); // Bottom.
+  GrLine(dc,canv_x_end,canv_y_start,canv_x_end,canv_y_end); // Right.
+  GrLine(dc,canv_x_start,canv_y_end,canv_x_end,canv_y_end); // Bottom.
 
   // Draw frame shadow.
   dc->color=BLACK;
-  GrLine(dc,CANV_X_START-1,CANV_Y_START,CANV_X_START-1,CANV_Y_END); // Left.
-  GrLine(dc,CANV_X_START,CANV_Y_START,CANV_X_END,CANV_Y_START); // Top.
+  GrLine(dc,canv_x_start-1,canv_y_start,canv_x_start-1,canv_y_end); // Left.
+  GrLine(dc,canv_x_start,canv_y_start,canv_x_end,canv_y_start); // Top.
 
   // Draw sidebar items 
   dc->color=BLACK;
-  GrPrint(dc,CANV_X_END+10,LOGO_HEIGHT+8,"Time:%5.2f",match_time);
-  GrPrint(dc,CANV_X_END+50,LOGO_HEIGHT+36,"Scores");
-  if (DEBUG) {
-    GrPrint(dc,CANV_X_END+50,LOGO_HEIGHT+56,"Divisor: %d",spawn_height_divisor);
-    GrPrint(dc,CANV_X_END+50,LOGO_HEIGHT+76,"Dead: %d",game_over);
+  GrPrint(dc,canv_x_end+10,logo_height+8,"Time:%5.2f",match.time);
+  GrPrint(dc,canv_x_end+50,logo_height+36,"Scores");
 
+  if (DEBUG) {
+    GrPrint(dc,canv_x_end+50,logo_height+56,"Spawn height: %d",match.spawn_height);
+    GrPrint(dc,canv_x_end+50,logo_height+76,"Health: %d",player.health);
+    GrPrint(dc,canv_x_end+50,logo_height+96,"Inv frames: %d",player.invincibility_frames);
   }
 }
 
@@ -283,22 +263,26 @@ U0 Main() {
   DocClear;
   Fs->draw_it=&DrawIt;
 
+  I64 frame;
+  F64 frame_time_start;
 
   while (!ms.lb) {
-    match_time = tS - match_start_time;
+    frame_time_start = tS;
 
-    player_pos[0] = ClampI64(ms.pos.x,CANV_X_START,CANV_X_END);
-    player_pos[1] = ClampI64(ms.pos.y,CANV_Y_START,CANV_Y_END);
+    match.time = tS - match.start_time;
 
-    for (i=0;i<ENEMY_NUM;i++) {
-      if (frame%FIRE_COOLDOWN==0 &&
-          20 < enemies[i][1] < GR_HEIGHT) {
+    player.x = ClampI64(ms.pos.x,canv_x_start,canv_x_end);
+    player.y = ClampI64(ms.pos.y,canv_y_start,canv_y_end);
+
+    for (i=0;i<match.enemy_num;i++) {
+      if (frame % match.enemy_fire_cooldown == 0 &&
+          canv_y_start < enemies[i].y < canv_y_end) {
         // Bullets are shot by all enemies simultaniously.
         // The bullets point towards the player's position
         // at the time of firing.  
 
-        F64 delta_x = enemies[i][0] - player_pos[0];
-        F64 delta_y = enemies[i][1] - player_pos[1];
+        F64 delta_x = enemies[i].x - player.x;
+        F64 delta_y = enemies[i].y - player.y;
         F64 smaller_abs;
         F64 larger_abs;
         F64 u;
@@ -312,68 +296,64 @@ U0 Main() {
         }
         u=larger_abs/smaller_abs;
 
-        bullet_count = (bullet_count + 1) % MAX_BULLET_NUM;
+        bullet_count = (bullet_count + 1) % BULLET_ARRAY_SIZE;
 
-        bullets[bullet_count][0] = enemies[i][0];
-        bullets[bullet_count][1] = enemies[i][1];
+        bullets[bullet_count].x = enemies[i].x;
+        bullets[bullet_count].y = enemies[i].y;
 
-        bullets[bullet_count][2] = (delta_x(F64)/smaller_abs)/u;
-        bullets[bullet_count][3] = (delta_y(F64)/smaller_abs)/u;
+        bullets[bullet_count].delta_x = (delta_x(F64)/smaller_abs)/u;
+        bullets[bullet_count].delta_y = (delta_y(F64)/smaller_abs)/u;
       }
 
-      if (enemies[i][1] > GR_HEIGHT+10) {
+      if (enemies[i].y > GR_HEIGHT+10) {
         // Reset enemy if below screen.
-        enemies[i][0] = RandRange(CANV_X_START,CANV_X_END);
-        enemies[i][1] = \
-          (RandRange(,MAX_SPAWN_HEIGHT/spawn_height_divisor) \
-          -MAX_SPAWN_HEIGHT/spawn_height_divisor)-200;
+        enemies[i].x = RandRangeI64(canv_x_start,canv_x_end);
+        enemies[i].y = RandRangeI64(match.spawn_height,0);
       } else {
         // Move enemy downward.
-        enemies[i][1]++;
+        enemies[i].y++;
 
-        // Sway enemies. They always sway, but much moreso
-        // on later stages.
-        if (ENEMY_SWAY) {
-          enemies[i][0] = Sin(enemies[i][1]/40.0)*20+enemies[i][2];
-        } else {
-          enemies[i][0] = Sin(enemies[i][1]/40.0)*10+enemies[i][2];
-        }
+//        enemies[i].x = Sin(
+//		enemies[i].y/(enemies[i].swaye_multiplier(F64)))*10+enemies[i].original_x;
       }
     }
 
-    for (i=0;i<MAX_BULLET_NUM;i++) {
+    for (i=0;i<BULLET_ARRAY_SIZE;i++) {
 
       // Check collision with player.
       // It's lenient and only checks half the player's radius.
-      I64 dx = bullets[i][0] - player_pos[0];
-      I64 dy = bullets[i][1] - player_pos[1];
-      if (Sqrt(dx * dx + dy * dy) < (BULLET_RADIUS + (PLAYER_RADIUS>>1)))
-        game_over = TRUE;
+      I64 dx = bullets[i].x - player.x;
+      I64 dy = bullets[i].y - player.y;
+      if (Sqrt(dx * dx + dy * dy) < (BULLET_RADIUS + (PLAYER_RADIUS>>1)) &&
+		player.invincibility_frames == 0) {
+        player.health--;
+        player.invincibility_frames = 100;
+      }
 
       // Move bullets or reset them if out-of-bounds.
-      if (bullets[i][0] < CANV_X_START-20 ||
-          bullets[i][0] > CANV_X_END+20	  ||
-          bullets[i][1] < CANV_Y_START-20 ||
-          bullets[i][1] > CANV_Y_END+20) {
-        bullets[i][0]=-10;
-        bullets[i][1]=0;
-        bullets[i][2]=0;
-        bullets[i][3]=0;
+      if (bullets[i].x < canv_x_start-20 ||
+          bullets[i].x > canv_x_end+20	 ||
+          bullets[i].y < canv_y_start-20 ||
+          bullets[i].y > canv_y_end+20) {
+        bullets[i].x=-10;
+        bullets[i].y=0;
+        bullets[i].delta_x=0;
+        bullets[i].delta_y=0;
       } else {
-        bullets[i][0] += bullets[i][2];
-        bullets[i][1] += bullets[i][3];
+        // Move bullets by their velocity
+        bullets[i].x += bullets[i].delta_x;
+        bullets[i].y += bullets[i].delta_y;
       }
     }
 
-    // See spawn_height_divisor declaration.
-    // Tying gameplay to framerate is considered very
-    // good practice.
-    if (frame != 0 && frame % 2500 == 0) {
-      spawn_height_divisor++;
-    }
 
-    Sleep(FRAME_DELAY);
+    // (Keep frame rate independent. Bit shift and I64 conversion
+    //  change from F64 sec to I64 millisec that Sleep needs.)
+    //Sleep((match.frame_length - (tS - frame_time_start)<<2)(I64));
+    Sleep(10);
     frame++;
+    if (player.invincibility_frames != 0)
+      player.invincibility_frames--;
   }
 
   SettingsPop;
@@ -382,6 +362,5 @@ U0 Main() {
 }
 
 Main;
-
 
 
