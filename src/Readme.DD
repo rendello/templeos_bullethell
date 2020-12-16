@@ -1,0 +1,147 @@
+
+$TR,"Manual"$
+$ID,2$In This is Bull!ts, you control a daring pilot facing certain
+doom for the ultimate prize: the best high-score!
+
+Increasingly dense waves of enemies will fire at you, and all
+you have to do is avoid their bullets. You have three health
+units, which will slowly regenerate when lost.
+
+Your current time is shown on the big scoreboard, and the top
+ten scores are shown below. If you're in the top ten, you'll be
+able to see your outlined score rising up and replacing old ones!
+
+$TX+IV," CONTROLS "$
+
+Mouse / Arrows * תתת Move ship
+Left click  תתתתתתתת Show match time
+Right click תתתתתתתת Show health & health regen countdown
+
+Enter תתתתתתתתתתתתתת Start new match
+Esc ** תתתתתתתתתתתתת Close game
+
+Z תתתתתתתתתתתתתתתתתת Show debug menu
+X תתתתתתתתתתתתתתתתתת Toggle low / high quality graphics
+C תתתתתתתתתתתתתתתתתת Toggle 3D player sprite
+
+
+*  WASD and HJKL also supported for key controls.
+** Shift+Esc also works. Double left- and right-clicks
+   are synonymous with Esc and Shift+Esc respectively in
+   TempleOS.
+$ID,-2$$TR-C,"Technical Q&A"$
+$ID,2$
+$ID,-2$
+
+PALETTE SHIFTING
+
+TempleOS Color Preamble
+---
+One of the instantly recognizable aspects of TempleOS is its
+spartan color scheme. The palette chosen aren't arbritrary, it's
+the exact same as the classic 4-bit CGA palette from the 1980s
+(maybe more commonly associated with the later EGA color adapter).
+
+The lack of color choice is delibrate: it takes more code to
+restrict the colors to 16 than to allow all 16 million of the
+modern 24-bit palette.
+
+So why would Terry Davis put this restriction? The famous answer
+is that Terry claims god himself instructed that TempleOS should
+only have 16 colors and be 640x480 pixels, and this is indeed what
+Terry claims.
+
+But if you look into 
+
+
+
+
+RGB Shifting
+---
+The palette shifting code is quite simple, let's take a look at
+the InterpolateColors function I created:
+
+
+$ID,2$$HL,1$U0 InterpolateColors(CBGR48 *buf, I16 steps, CBGR48 c1, CBGR48 c2,
+	Bool walk_back=FALSE) {
+  // Fills a buffer by linearly interpolating two colors
+  // through n steps in RGB space.
+  //
+  // Generally, the size of the buffer must equal the steps.
+  //
+  // If walk_back is enabled, it will walk back to the original
+  // color, in which case buffer must be of size (steps*2)-2
+
+  I16 i;
+
+  for (i=0;i<steps;i++) {
+    buf[i].pad = 0;
+    buf[i].r = (c2.r - c1.r) * i / steps + c1.r;
+    buf[i].g = (c2.g - c1.g) * i / steps + c1.g;
+    buf[i].b = (c2.b - c1.b) * i / steps + c1.b;
+  }
+  if (walk_back) {
+    for (i=0;i<steps-2;i++) {
+      buf[steps+i] = buf[steps-i-2];
+    }
+  }
+}$HL,0$$ID,-2$
+
+Every color, like RED or BLUE
+
+
+
+
+GLOBAL STATE
+
+
+
+
+Q: Why are so many variables global?
+A: The logic and drawing callbacks provided in TempleOS,
+Fs->animate_task and Fs->draw_it respectively, need to share a
+lot of state that can't be passed in directly.
+
+$TX+IV," Q: Why are there so many section comments? "$
+
+A: I'm of two minds when it comes to managing state. I believe
+that programming in a functional style is hugely beneficial, but
+I also believe it's often better to have large functions with easy-
+to-follow logic. John Carmack has some great thoughts on this.
+
+Previously, I would have put almost every piece of code that has a
+section comment in its own function. The functions aren't there for
+the computer or compiler, they're there to help the human programmer.
+This type of function is meant to reduce the cognitive load a
+programmer has while reading code, but it can easily introduce more
+cognitive load, and make the code really hard to follow. When possible,
+I try to write code that *does* things, and avoid code that *abstracts*
+things.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

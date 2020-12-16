@@ -1,0 +1,899 @@
+
+// $TX+IV,"       This Is Bull!ts       "$   ÛÛÛ   ÛÛÛ
+//                                Û±±ÛÛ ÛÛÛÛÛ
+// Bullet Hell game for TempleOS. Û±ÛÛÛÛÛÛÛÛÛ
+// By Rendello, September 2020.   ÛÛÛÛÛÛÛÛÛÛÛ  
+//                                Û±ÛÛÛÛÛÛ±±Û  ±±
+// Under BSD-3 licence, see readme.ÛÛÛÛÛÛ± ±± ±±±±
+// If you modify and re-release     ÛÛÛÛÛ±±±±±±±±±
+// it, please change the title       ÛÛÛÛÛ±±±±±±±
+// and credit the original.           ÛÛÛ  ±±±±±
+//                                     Û    ±±±
+// Enjoy!                                    ±
+
+
+
+#define FANCY_GRAPHICS	ON
+#define PROFILER	OFF
+
+#exe {Cd(__DIR__);;};
+#include "BulletHell.HH";
+
+
+
+
+
+
+$SP,"<skull_open_plain>",BI=1$$SP,"<skull_open_red>",BI=2$$SP,"<skull_open_yellow>",BI=3$
+
+
+
+
+
+
+
+
+$SP,"<skull_closed_plain>",BI=4$$SP,"<skull_closed_red>",BI=5$$SP,"<skull_closed_yellow>",BI=6$
+
+
+
+
+
+
+$SP,"<skull_firing>",BI=7$
+
+
+
+
+
+
+$SP,"<skull>",BI=8$
+
+
+
+
+
+
+
+class AFrame {
+  // Animation frame.
+  // The x-offset is relative to the sprite's
+  // orientation.
+  U8 *sprite;
+  F64 x_off;
+};
+
+class Animation {
+  I64 length;
+  AFrame *frames;
+};
+
+AFrame none_frames[1] = {
+  {$IB,"<skull_closed_plain>",BI=9$, 0}
+};
+
+
+AFrame fire_frames[13] = {
+  {$IB,"<skull_closed_plain>",BI=10$, 0},
+  {$IB,"<skull_closed_plain>",BI=11$, 3},
+  {$IB,"<skull_closed_plain>",BI=12$, 0},
+  {$IB,"<skull_closed_plain>",BI=13$, 0},
+  {$IB,"<skull_closed_plain>",BI=14$, 0},
+  {$IB,"<skull_closed_yellow>",BI=15$, 0},
+  {$IB,"<skull_closed_red>",BI=16$, 0},
+  {$IB,"<skull_open_yellow>",BI=17$, 0},
+  {$IB,"<skull_firing>",BI=18$, 0},
+  {$IB,"<skull_firing>",BI=19$, 0},
+  {$IB,"<skull_closed_plain>",BI=20$, 0},
+  {$IB,"<skull_closed_plain>",BI=21$, 0},
+  {$IB,"<skull_closed_plain>",BI=22$, 0},
+};
+
+Animation skull_anim_none = {1, none_frames};
+Animation skull_anim_fire = {13, fire_frames};
+
+
+
+
+
+// $TX+IV,"                                             "$
+// $TX+IV,"     Declare / init match-agnostic state     "$
+// $TX+IV,"                                             "$
+
+// None of this has to be changed or reset
+// between matches.
+
+CTask *task=Fs;
+CDC *dc=DCAlias;
+CDC *dc_2=DCAlias;
+
+CDateStruct ds;
+
+I64 i, j;
+
+Bool debug=OFF;
+Bool draw_jet=ON;
+Bool fancy_graphics=OFF;
+
+// (Where the left-click quick stats go.)
+I64 stat_align_left;
+I64 stat_align_right;
+
+
+F64 update_time_start;
+F64 update_time_ms = 0;
+
+F64 draw_time_start;
+F64 draw_time_ms = 0;
+
+F64 dx;
+F64 dy;
+
+// For setting bullet velocity
+F64 speed;
+F64 distance;
+
+
+// $TX+IV," Initialize skull animation data "$
+// All skulls share the same syncronized frames of
+// animation.
+Animation *skull_anim = &skull_anim_none;
+I64 skull_anim_frame = 0;
+U8 *skull_sprite = $IB,"<skull_plain_open>",BI=4$;
+
+
+
+// $TX+IV," Initialize top scores "$
+// The top_scores array is of size TOP_SCORES_NUM + 1
+// as at the end of a match, the current score is
+// appended and the array is once again QSorted.
+// The new top ten scores are stored to the save file.
+RegDft("Rendello/Bull!ts",
+	"Score top_scores[11]={{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0},{0,0}}");
+
+RegExe("Rendello/Bull!ts");
+
+
+
+// $TX+IV,"                                      "$
+// $TX+IV,"     Declare match-specific state     "$
+// $TX+IV,"                                      "$
+
+// All values will be initialized in Init().
+// See Init() for details on each value.
+
+U8 scoreboard_string[6];
+
+Enemy enemies[ENEMY_NUM];
+
+// (Circular queue.)
+Bullet bullets[BULLET_ARRAY_SIZE];
+I64 bullet_count;
+
+I64 draw_graph_buf[255];
+I64 update_graph_buf[255];
+
+Bool current_score_drawn;
+I64 frame;
+I64 draw_frame;
+F64 old_ms_x;
+F64 rotation;
+
+Match match;
+Player player;
+Score current_score;
+
+
+U0 PaletteInit() {
+  // Changes the palette to the game version. If palette
+  // shifting is enabled, most of the changes won't be
+  // visible.
+  GrPaletteColorSet(BLACK,0x0a000a000b00);
+  GrPaletteColorSet(DKGRAY_2,0x220022002200);
+  GrPaletteColorSet(LTGRAY,0xa000a000a000);
+  GrPaletteColorSet(LTRED,0xFF0022002200);
+}
+
+
+U0 Init() {
+  // Initializes (prev. declared) state for a new match.
+  // Most game state must be global, in order to be used
+  // by the draw (Fs->draw_it) and logic (Fs->animate_task)
+  // callbacks.
+
+  // $TX+IV," Init enemies "$
+  enemies[0].x=1;
+
+  for (i=0;i<ENEMY_NUM;i++) {
+    enemies[i].x = RandRangeI64(CANV_X_START,CANV_X_END);
+    enemies[i].y = RandRangeI64(INIT_SPAWN_HEIGHT,0);
+    enemies[i].original_x = enemies[i].x;
+    enemies[i].sway_multiplier = RandRangeI64(
+  	ENEMY_SWAY_LOWER_BOUND, ENEMY_SWAY_UPPER_BOUND);
+  }
+
+
+  // $TX+IV," Init bullets "$
+  // Inactive bullets are stored off-screen.
+  // Each fired bullet increases the bullet_count
+  // and occupies its index in the array. bullet_count
+  // loops back to 0 after hitting BULLET_ARRAY_SIZE.
+  bullet_count = 0;
+  for (i=0;i<BULLET_ARRAY_SIZE;i++) {
+    ResetBullet(bullets,i);
+  }
+
+  // $TX+IV," Init ship rotation "$
+  old_ms_x=ms.pos.x;
+  rotation=0;
+
+  // $TX+IV," Init frame count "$
+  frame = 0;
+  draw_frame = 0;
+
+  // $TX+IV," Init graph buffers "$
+  for (i=0;i<255;i++) {
+    draw_graph_buf[i] = 0;
+    update_graph_buf[i] = 0;
+  }
+
+  // $TX+IV," Init match "$
+  match.spawn_height = INIT_SPAWN_HEIGHT;
+  match.spawn_tolerence = INIT_SPAWN_HEIGHT - 1000;
+  match.start_time = tS;
+  match.time = tS;
+  match.big_bullet_interval = 30;
+  match.is_over = FALSE;
+
+  // $TX+IV," Init player "$
+  player.x = 100;
+  player.y = 100;
+  player.health = MAX_HEALTH;
+  player.invincibility_frames = 0;
+  player.last_hit_time = 0;
+
+  // $TX+IV," Init current score "$
+  current_score.match_time = match.time;
+  current_score.date = "Right now!";
+
+  // $TX+IV," Init static palette "$
+  PaletteInit;
+}
+
+
+// $TX+IV," Bullet palette-swap data "$
+I64 bullet_color_steps = 85;
+I64 bullet_color_num = (bullet_color_steps*2)-2;
+CBGR48 bullet_colors[bullet_color_num];
+
+InterpolateColors(bullet_colors,bullet_color_steps,0xff0033000000,
+	0xff00cc000000,TRUE);
+
+
+// $TX+IV," Set gray palette-swap data "$
+I64 pal_shift_gray_steps = 51;
+I64 pal_shift_gray_num = (pal_shift_gray_steps*2)-2;
+
+// LT
+CBGR48 pal_shift_ltgray[pal_shift_gray_num];
+InterpolateColors(pal_shift_ltgray,pal_shift_gray_steps,
+	GrPaletteColorGet(LTGRAY), 0xff0000000000,TRUE);
+
+// DK
+CBGR48 pal_shift_dkgray[pal_shift_gray_num];
+InterpolateColors(pal_shift_dkgray,pal_shift_gray_steps,
+	GrPaletteColorGet(DKGRAY), 0xaa0000000000,TRUE);
+
+// DK_2
+CBGR48 pal_shift_dkgray_2[pal_shift_gray_num];
+InterpolateColors(pal_shift_dkgray_2,pal_shift_gray_steps,
+	0x220022002200, 0x400022002200,TRUE);
+
+
+
+// $TX+IV,"                          "$
+// $TX+IV,"     Drawing callback     "$
+// $TX+IV,"                          "$
+
+U0 Draw(CTask *task, CDC *) {
+  draw_time_start=tS;
+
+  DCFill;
+
+  // $TX+IV," Palette-shift bullets "$
+  // Bullets have two colors, one is always behind the other
+  // by approx. half the steps.
+
+  # if (FANCY_GRAPHICS)
+    GrPaletteColorSet(PURPLE,bullet_colors[frame%bullet_color_num]);
+    GrPaletteColorSet(LTPURPLE,bullet_colors[(frame+bullet_color_steps)%bullet_color_num]);
+  # endif
+
+  // $TX+IV," Palette-shift LTGRAY on damage "$
+  if (player.health >= MAX_HEALTH) {
+    GrPaletteColorSet(SB_IMG_BG,0xff00cc000000);
+  } else {
+    GrPaletteColorSet(SB_IMG_BG,GrPaletteColorGet(PURPLE));
+
+    if (player.health <= 1) {
+      GrPaletteColorSet(LTGRAY,pal_shift_ltgray[frame%pal_shift_gray_num]);
+      GrPaletteColorSet(DKGRAY,pal_shift_dkgray[frame%pal_shift_gray_num]);
+      GrPaletteColorSet(DKGRAY_2,pal_shift_dkgray_2[frame%pal_shift_gray_num]);
+
+    }
+  }
+
+  dc->color=BLACK;
+  GrRect(dc,-10,-10,GR_WIDTH,GR_HEIGHT);
+
+/*
+  //DCFill(dc,DKGRAY);
+  for (i=CANV_X_END;i>0;i-=6) {
+    if (!(i&2)) {
+      dc->color=BUL_BG_1;
+    } else {
+      dc->color=YELLOW;
+    }
+    GrFillCircle(
+      dc,
+      Sin(tS/3)*(i&15)+CANV_X_MID,
+      Sin(tS/4)*(i&15)+CANV_X_MID,
+      ,
+      ToI64(i)
+     );
+  }
+*/
+
+
+  // $TX+IV," Screen-shake on hit "$
+  // (Using Fs as the task does make the top bar move,
+  // but the text only moves in multiples of 8.)
+  if (player.invincibility_frames>60) {
+    task->scroll_x=RandRangeI64(-10,10);
+    task->scroll_y=RandRangeI64(-7,7);
+  } else {
+    // (Setting every frame also prevents ctrl-dragging.)
+    task->scroll_x=0;
+    task->scroll_y=0;
+  }
+
+
+  // $TX+IV," Draw enemies "$
+  for (i=0; i<ENEMY_NUM;i++) {
+    if (enemies[i].y > 0) {
+//      dc->color=GREEN;
+//      GrFillCircle(dc,enemies[i].x,enemies[i].y,,20);
+///*
+      F64 é=0;
+      Bool is_flipped=FALSE;
+      
+      Target(enemies[i].x, enemies[i].y, player.x, player.y,
+      		&é, &is_flipped);
+
+/*
+      if (skull_anim_frame < skull_anim->length) {
+        skull_sprite = skull_anim->frames[skull_anim_frame].sprite;
+        ChangeRelative(&enemies[i].x, &enemies[i].y,
+	skull_anim->frames[skull_anim_frame].x_off,
+	é,
+	is_flipped);
+      } else {
+        skull_anim_frame = 0;
+      }
+*/
+
+      if (is_flipped) {
+        dc->flags|=DCF_SYMMETRY|DCF_JUST_MIRROR;
+        DCSymmetrySet(dc,enemies[i].x,enemies[i].y-1,enemies[i].x,
+		enemies[i].y+1);
+      }
+
+      Sprite3ZB(dc,enemies[i].x,enemies[i].y,0,skull_sprite,é);
+      dc->flags&=~(DCF_SYMMETRY|DCF_JUST_MIRROR);
+//*/
+    }
+  }
+
+  // $TX+IV," Update player position "$
+  // NOTE: Updating state inside the draw loop
+  // isn't great, but the player position will
+  // lag by one frame if updated in the main loop,
+  // which is bad for this type of game.
+  player.x = Clamp(ms.pos.x,ToF64(CANV_X_START),ToF64(CANV_X_END-10));
+  player.y = Clamp(ms.pos.y,CANV_Y_START,CANV_Y_END);
+
+  if (ms.pos.x > CANV_X_END) gr.fp_draw_ms=&DrawStdMs;
+  else gr.fp_draw_ms=&MsDrawNothing;
+
+  // $TX+IV," Draw jet "$
+  if (draw_jet) {
+    // Calculate jet rotation
+    if (ms.pos.x-old_ms_x != 0) {
+      rotation=Clamp(rotation+ToF64(ms.pos.x-old_ms_x)/100,-1,1);
+    } else {
+      rotation -= rotation/10;
+    }
+    JetDraw(dc_2,player.x+4,player.y-4,rotation);
+  }
+
+  // $TX+IV," Draw player "$
+  dc->color=BLUE;
+  // Blink on invincibility frames
+  if (player.invincibility_frames !=0 &&
+	player.invincibility_frames % 4 == 0) {
+    // (NO-OP; Don't draw player).
+  } else {
+     // (Keep player dot legible w/ or w/o jet.)
+     if (draw_jet) {
+       dc->color = WHITE;
+     } else {
+       dc->color = BLACK;
+     }
+     GrFillCircle(dc,player.x+4,player.y-4,,PLAYER_DIAMETER);
+     dc->color = LTBLUE;
+     GrFillCircle(dc,player.x+4,player.y-4,,6);
+  }
+
+  for (i=0;i<BULLET_ARRAY_SIZE;i++) {
+    // $TX+IV," Draw bullet "$
+    // Two colored circles, see palette-shift above.
+    // Half of the bullets have a 'dark' middle and 'light' border,
+    // the other half is the opposite. It gives the palette-shifting
+    // bullets more visual variety.
+
+    if (bullets[i].x > -10) {
+      if (i%2==0) {
+        dc->color=BUL_BG_1;
+      } else {
+        dc->color=BUL_BG_2;
+      }
+      GrFillCircle(dc,bullets[i].x,bullets[i].y,,bullets[i].diameter<<1);
+      if (i%2==0) {
+        dc->color=BUL_BG_2;
+      } else {
+        dc->color=BUL_BG_1;
+      }
+      GrFillCircle(dc,bullets[i].x,bullets[i].y,,bullets[i].diameter+1);
+    }
+  }
+
+
+  // $TX+IV," Show stats when player left-clicks "$
+  dc->color=WHITE;
+
+  if (ms.lb) {
+    if (draw_jet) {
+      stat_align_left = player.x - 68;
+      stat_align_right = player.x + 38;
+    } else {
+      stat_align_left = player.x - 48;
+      stat_align_right = player.x + 15;
+    }
+
+    GrPrint(dc,stat_align_left,player.y-7,"%5.1f",match.time);
+    dc->color=GREEN;
+
+    GrPrint(dc,stat_align_right,player.y-7,"%d",player.health);
+    if (player.health < MAX_HEALTH) {
+      dc->color=LTBLUE;
+      GrPrint(dc,stat_align_right,player.y+2,"%-3.1f",REGEN_TIME - (match.time - player.last_hit_time));
+    }
+  }
+
+  if (player.health < 1) {
+    dc->color=WHITE;
+    DotMatrix(dc,50,180,13,7,"GAME OVER");
+  }
+
+  // $TX+IV," Draw frame / sidebar bg "$
+  dc->color=DKGRAY_2;
+
+  // (Sidebar.)
+  GrRect(dc,CANV_X_END,0,190,GR_HEIGHT);
+
+  // (Padding around play area to cover bare areas on screen shake.)
+  GrRect(dc,-15,-15,15,GR_HEIGHT+20);	// left
+  GrRect(dc,0,-15,GR_WIDTH+15,15);	// top
+  GrRect(dc,0,GR_HEIGHT-10,GR_WIDTH+15,15); // bottom
+
+  BorderDraw(dc, 0, 1, CANV_X_START+CANV_X_END-3,
+	CANV_Y_START+CANV_Y_END, 6, DKGRAY, LTGRAY);
+
+
+  // $TX+IV," Draw sidebar image "$
+  Sprite3(dc,CANV_X_END+3,0,3,$IB,"<23>",BI=23$,TRUE);
+
+
+  // $TX+IV," Set dot-matrix string "$
+  if (player.invincibility_frames > 0) {
+    if (player.invincibility_frames&0b1000==0) {
+      StrPrint(scoreboard_string,"OUCH!");
+    } else {
+      StrPrint(scoreboard_string,"");
+    }
+  } else if (player.health > 0) {
+    StrPrint(scoreboard_string,"%5.1f",match.time);
+  } else {
+    if (ToI64(tS*100)&0b10000 != 0) {
+    if (Blink(0.3)) {
+      if (!Blink(0.6)) {
+         StrPrint(scoreboard_string,"GAME");
+       } else {
+        StrPrint(scoreboard_string,"OVER!");
+      }
+    } else {
+      StrPrint(scoreboard_string,"%5.1f",match.time);
+    }
+    } else {
+      StrPrint(scoreboard_string,"");
+    }
+  }
+
+  // $TX+IV," Draw dot-matrix timer "$
+  dc->color=BLACK;
+  GrRect(dc,CANV_X_END+7,255,165,40);
+
+  dc->color=YELLOW;
+  DotMatrix(dc,CANV_X_END+22,260,6,5,scoreboard_string);
+  BorderDraw(dc, CANV_X_END+5, 254, 167, 43, 2, DKGRAY, LTGRAY);
+
+
+  // $TX+IV," Draw health "$
+  dc->color=LTGRAY;
+  GrPrint(dc,CANV_X_END+6,300,"PWR");
+
+  CBGR48 sheen_color;
+  for (i=0; i<MAX_HEALTH; i++) {
+    if (MAX_HEALTH-i <= player.health) {
+      dc->color=GREEN;
+      sheen_color=LTGREEN;
+    } else {
+      dc->color=DKGRAY;
+      sheen_color=LTGRAY;
+    }
+    GrRect(dc,CANV_X_END+6,310+(i*HP_Y_OFF),HP_WIDTH,13);
+
+    if (!(MAX_HEALTH-i <= player.health)) {
+      // $TX+IV," Draw regen status "$
+      F64 regen_time = match.time - player.last_hit_time;
+
+      dc->color=YELLOW;
+      GrRect(dc,CANV_X_END+6,
+	310+(i*HP_Y_OFF)+HP_HEIGHT-regen_time,
+	HP_WIDTH,regen_time);
+
+      Sprite3(dc,CANV_X_END+22,311+(i*HP_Y_OFF),0,$IB,"<skull>",BI=24$);
+    }
+
+    BorderDraw(dc, CANV_X_END+6, 310+(i*HP_Y_OFF),
+	HP_WIDTH,HP_HEIGHT,2,sheen_color,LTGRAY);
+  }
+
+  // $TX+IV," Draw top scores table "$
+  // Current score shown in BUL_BG_1, knocks lower scores off
+  // the board.
+
+  dc->color=LTGRAY;
+  GrPrint(dc,CANV_X_END+130,300,"TOP");
+
+  dc->color=BLACK;
+  GrRect(dc,CANV_X_END+128,308,44,102);
+
+  current_score_drawn=FALSE;
+  for (i=0;i<TOP_SCORES_NUM;i++) {
+    if (top_scores[i].match_time < current_score.match_time &&
+	!current_score_drawn) {
+      dc->color=BUL_BG_1;
+      GrPrint(dc,CANV_X_END+130,311+(i*10),"%5.1f",
+		current_score.match_time, current_score.date);
+      current_score_drawn=TRUE;
+    }
+    dc->color=GREEN;
+    if (!(current_score_drawn && i==TOP_SCORES_NUM-1)) {
+      GrPrint(dc,CANV_X_END+130,311+((current_score_drawn+i)*10),
+		"%5.1f",top_scores[i].match_time,top_scores[i].date);
+    }
+  }
+
+  // $TX+IV," Draw game info "$
+  dc->color=LTGRAY;
+  GrPrint(dc,CANV_X_END+5,461,"TiB BETA     Rendello");
+
+  // $TX+IV," Draw debug "$
+  if (debug) {
+    dc->color=BLUE;
+    GrPrint(dc,10,10,
+	"Max spawn height (pix): %d",match.spawn_height);
+    GrPrint(dc,10,20,
+	"Draw time (ms): úúúúúúú %5.3f",draw_time_ms);
+    GrPrint(dc,10,30,
+	"Update time (ms): úúúúú %5.3f",update_time_ms);
+    GrPrint(dc,10,40,
+	"Big bullet ratio: úúúúú 1:%d",match.big_bullet_interval-1);
+    if (draw_jet) {
+      GrPrint(dc,10,50,
+	"Jet rotation: úúúúúúúúú %5.3f",rotation);
+    }
+
+    // $TX+IV," Draw debug graphs "$
+    // Graphs are 1 frame behind.
+    // Both are sync'd to the current draw frame, meaning a lot
+    // of update frames aren't counted. It still gives an idea of
+    // how long an update frame takes.
+
+    Graph(dc, draw_graph_buf, 10, 100, draw_frame,
+	draw_time_ms*10, "Draw time (x10)");
+    Graph(dc, update_graph_buf, 10, 150, draw_frame,
+	update_time_ms*1000, "Update time (x1000)");
+  }
+
+  draw_time_ms = (tS-draw_time_start) * 1000;  
+  old_ms_x = ms.pos.x; // For jet rotation.
+  draw_frame++;
+  if (draw_frame%2==0) skull_anim_frame++;
+}
+
+
+// $TX+IV,"                         "$
+// $TX+IV,"     Update callback     "$
+// $TX+IV,"                         "$
+
+U0 GameUpdate(I64) {
+  while (TRUE) {
+    // $TX+IV," NOTE! "$
+    // Player position update code is in the draw loop.
+
+    if (match.is_over) goto end_loop;
+
+    // $TX+IV," Update total match time + start frame time "$
+    update_time_start = tS;
+    if (player.health > 0) {
+      match.time = tS - match.start_time;
+    }
+    current_score.match_time = match.time;
+
+    // $TX+IV," Fire towards player"$
+    // Bullets are shot by all enemies simultaniously.
+    for (i=0;i<ENEMY_NUM;i++) {
+      if (frame % ENEMY_FIRE_COOLDOWN == 0 &&
+          CANV_Y_START < enemies[i].y < CANV_Y_END) {
+        skull_anim = &skull_anim_fire;
+
+        bullets[bullet_count].x = enemies[i].x;
+        bullets[bullet_count].y = enemies[i].y;
+
+        if (bullet_count % match.big_bullet_interval == 0) {
+          bullets[bullet_count].diameter = ToI64(BULLET_DIAMETER*2);
+          speed=1.9;
+        } else {
+          bullets[bullet_count].diameter = BULLET_DIAMETER;
+          speed=1.4;
+        }
+
+        distance = Sqrt((player.x - enemies[i].x)`2 +
+        	(player.y - enemies[i].y)`2);
+
+        bullets[bullet_count].vel_x = speed*((player.x-enemies[i].x)/distance);
+        bullets[bullet_count].vel_y = speed*((player.y-enemies[i].y)/distance);
+      
+        // (Simple circular buffer, see init.)
+        bullet_count = (bullet_count + 1) % BULLET_ARRAY_SIZE;
+      }
+
+      if (enemies[i].y > GR_HEIGHT+10) {
+
+        // $TX+IV," Reset enemy if below screen "$
+        enemies[i].x = RandRangeI64(CANV_X_START,CANV_X_END);
+        enemies[i].y = RandRangeI64(-match.spawn_height,0);
+
+      } else {
+
+        // $TX+IV," Sway enemy (if onscreen) & move it downward "$
+        if (enemies[i].y > -10) {
+          enemies[i].x = Sin(enemies[i].y/40.0)*enemies[i].sway_multiplier
+          	+enemies[i].original_x;
+        }
+        enemies[i].y+=ENEMY_DOWN_SPEED;
+      }
+    }
+
+    for (i=0;i<BULLET_ARRAY_SIZE;i++) {
+
+      // $TX+IV," Check collision with player "$
+
+      if (bullets[i].x > 0) {
+        dx = bullets[i].x - player.x-4;
+        dy = bullets[i].y - player.y+4;
+
+        // (PLAYER_DIAMETER>>1 is player's radius. Subtracts 1
+        // for leniancy.)
+        if (Sqrt(dx * dx + dy * dy) < (bullets[i].diameter + (PLAYER_DIAMETER>>1) - 1) &&
+		player.invincibility_frames == 0) {
+          ResetBullet(bullets,i);
+          player.health--;
+
+          // (Sleeping on hit gives it a bigger impact.)
+          // (Doesn't Sleep player movement as that code is in Draw loop.)
+          Sleep(90);
+
+          player.invincibility_frames = INVINCIBILITY_FRAMES;
+          player.last_hit_time = match.time;
+        }
+      }
+
+      if (bullets[i].x < CANV_X_START-20 ||
+          bullets[i].x > CANV_X_END+20	 ||
+          bullets[i].y < CANV_Y_START-20 ||
+          bullets[i].y > CANV_Y_END+20) {
+        // $TX+IV," Reset out-of-bounds bullets "$
+        ResetBullet(bullets,i);
+      } else {
+        // $TX+IV," Move bullets by their velocity "$
+        bullets[i].x += bullets[i].vel_x;
+        bullets[i].y += bullets[i].vel_y;
+      }
+    }
+
+    // $TX+IV," Decrement invincibility frames "$
+    if (player.invincibility_frames != 0) {
+      player.invincibility_frames--;
+    }
+
+    // $TX+IV," Reduce enemy spawn height "$
+    // The spawn height refers to how high the
+    // enemies can spawn above the playfield. The higher
+    // it is, the less dense the enemy formations are.
+    //
+    // It is reduced to make gameplay harder as a match
+    // goes on. To make the difficulty more 'dynamic' and
+    // less 'brick wall', it will jump back up at random
+    // points, if it's below the current 'tolerence'.
+
+    match.spawn_height--;
+
+    if (match.spawn_height < 3000) {
+      match.spawn_height = RandRangeI64(3000,5000);
+    }
+
+    if (match.spawn_height < match.spawn_tolerence
+	&& RandRangeI64(-100,100)==0) {
+      match.spawn_height += RandRangeI64(500,1000);
+      match.spawn_tolerence -= 400;
+    }
+
+    // $TX+IV," Regen player health "$
+    if ((player.health < 3) && (match.time - player.last_hit_time > REGEN_TIME)) {
+      player.health++;
+      // (Not technically hit, but regen is gradual)
+      player.last_hit_time = match.time;
+    }
+
+    if (frame%1000==0)
+      match.big_bullet_interval=ClampI64(match.big_bullet_interval-2,4,100);
+
+    // $TX+IV," Sleep until next frame "$
+    update_time_ms = (tS - update_time_start)*1000;
+    frame++;
+    Sleep(FRAME_LENGTH - ToI64(update_time_ms));
+  }  
+  end_loop:
+}
+
+
+
+// $TX+IV,"              "$
+// $TX+IV,"     Main     "$
+// $TX+IV,"              "$
+
+U0 Main() {
+  SettingsPush;
+
+  AutoComplete;
+  WinBorder;
+  WinMax;
+  DocCursor;
+  DocClear;
+
+  Init;
+
+  if (PROFILER) { Prof; }
+
+  Fs->draw_it=&Draw;
+  Fs->animate_task=Spawn(&GameUpdate,NULL,"Bull!ts Animate",,task);
+
+  I64 ch,sc; // char, scan code
+
+  match.start_time=tS;
+
+  // $TX+IV," Keypress loop "$
+  while (TRUE) {
+    // This loop handles keypresses, the main game loop
+    // is handled by the Fs->animate_task callback,
+    // UpdateGame();
+//    Sleep(1);
+    if (ScanKey(&ch, &sc)) {
+      switch (ch) {
+        case '\n':
+          break; // Todo new match
+        case CH_SHIFT_ESC:
+        case CH_ESC:
+          goto over;
+          break;
+        case 'Z':
+        case 'z':
+          debug = Toggle(debug);
+          break;
+        case 'X':
+        case 'x':
+          draw_jet = Toggle(draw_jet);
+          break;
+        default: break;
+      }
+    } else {
+      Yield;
+    }
+  }
+  over:
+
+
+  // $TX+IV," Update score "$
+  // Adds match's score to unused array cell and QSorts the
+  // whole thing, storing top TOP_SCORES_NUM. See initialization.
+
+  top_scores[TOP_SCORES_NUM].match_time = current_score.match_time;
+  top_scores[TOP_SCORES_NUM].date = current_score.date;
+
+
+  // $TX+IV," Put date for the new score "$
+  Date2Struct(&ds,Now);
+
+  U8 date_str[11];
+  StrPrint(date_str,"%d-%02d-%02d",ds.year,ds.mon,ds.day_of_mon);
+  StrCpy(current_score.date, date_str);
+
+
+  // $TX+IV," Sort and write scores to registry "$
+  QSort(top_scores,TOP_SCORES_NUM+1,sizeof(Score),&ScoreCompare);
+
+  RegWrite("Rendello/Bull!ts", \
+	"Score top_scores[11]={{%-5.1f,\"%s\"},{%-5.1f,\"%s\"},
+	{%-5.1f,\"%s\"},{%-5.1f,\"%s\"},{%-5.1f,\"%s\"},{%-5.1f,\"%s\"},
+	{%-5.1f,\"%s\"},{%-5.1f,\"%s\"},{%-5.1f,\"%s\"},{%-5.1f,\"%s\"},{0,0}};",
+	top_scores[0].match_time,top_scores[0].date,
+	top_scores[1].match_time,top_scores[1].date,
+	top_scores[2].match_time,top_scores[2].date,
+	top_scores[3].match_time,top_scores[3].date,
+	top_scores[4].match_time,top_scores[4].date,
+	top_scores[5].match_time,top_scores[5].date,
+	top_scores[6].match_time,top_scores[6].date,
+	top_scores[7].match_time,top_scores[7].date,
+	top_scores[8].match_time,top_scores[8].date,
+	top_scores[9].match_time,top_scores[9].date
+  );
+
+  // $TX+IV," Clean-up "$
+  DCDel(dc);
+  DCDel(dc_2);
+
+  SettingsPop;
+  DCFill(dc);
+  gr.fp_draw_ms=&DrawStdMs;
+
+  if (PROFILER) {
+    DocMax;
+    "=== BEGIN PROFILER REPORT ===\n";
+    ProfRep;
+    WinMax;
+  } else {
+    Print("Thank you for playing This is Bull!ts.\n\n");
+    Print("You can now close this window (Shift+Esc)\n\n");
+  }
+}
+
+Main;
+
+
+
+
+        â©             ª   ÷                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         	                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          	                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             Ò      ÿÿÿÿÿÿÿÿ      ÿÿÿÿÿÿÿÿÿÿÿ     ÿÿÿÿÿÿÿÿÿÿÿ     ÿÿÿ     ÿÿÿ     ÿÿ       ÿÿ     ÿÿ ÿÿ ÿÿ ÿÿ     ÿÿ ÿÿ ÿÿ ÿÿ     ÿÿ       ÿÿ     ÿÿ   ÿ   ÿÿ     ÿÿÿ     ÿÿÿ     ÿÿÿ ÿ ÿ ÿÿÿ     ÿÿÿÿÿÿÿÿÿÿÿ     ÿÿÿÿÿÿÿÿÿÿÿ             Ò      ÿÿÿÿÿÿÿÿ      ÿÿÿÿÿÿÿÿÿÿÿ     ÿÿÿÿÿÿÿÿÿÿÿ     ÿÿÿ     ÿÿÿ     ÿÿ       ÿÿ     ÿÿ ÿÿ ÿÿ ÿÿ     ÿÿ ÿÿ ÿÿ ÿÿ     ÿÿ       ÿÿ     ÿÿ   ÿ   ÿÿ     ÿÿÿ     ÿÿÿ     ÿÿÿ ÿ ÿ ÿÿÿ     ÿÿÿÿÿÿÿÿÿÿÿ     ÿÿÿÿÿÿÿÿÿÿÿ             R     îÿÿÿÜÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H           ò     ýÿÿÿêÿÿÿ)   *   ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿ       ÿÿÿÿÿÿ       ÿÿÿÿÿ       ÿÿÿÿÿ       ÿÿÿÿÿÿ       ÿÿÿÿÿÿ       ÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ       ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ               R     îÿÿÿÜÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H           R     ìÿÿÿÝÿÿÿH   H    	       R     îÿÿÿÜÿÿÿH   H    
+       R     îÿÿÿÜÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H           R     ìÿÿÿÝÿÿÿH   H           R     ìÿÿÿÝÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H           R     îÿÿÿÜÿÿÿH   H    
